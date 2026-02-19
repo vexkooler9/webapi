@@ -1,4 +1,4 @@
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page } from 'playwright';
 
 export interface ExtractedElement {
   id: string;
@@ -63,17 +63,14 @@ export class BrowserManager {
   async getBrowser(): Promise<Browser> {
     if (!this.browser) {
       const launchOptions: any = {
-        executablePath: '/snap/bin/chromium',
         headless: true,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
           '--disable-blink-features=AutomationControlled',
-          '--disable-extensions',
-          '--disable-plugins',
-          '--disable-infobars',
-          '--user-data-dir=/tmp/chrome-profile-' + Math.random().toString(36).substring(7),
         ]
       };
 
@@ -153,83 +150,60 @@ export class BrowserManager {
 }
 
 export async function extractElements(page: Page): Promise<ExtractedElement[]> {
-  const elements: ExtractedElement[] = [];
-  
-  const interactiveSelectors = [
-    'button',
-    'a[href]',
-    'input:not([type="hidden"])',
-    'textarea',
-    'select',
-    '[role="button"]',
-    '[tabindex]:not([tabindex="-1"])'
-  ];
-  
-  for (const selector of interactiveSelectors) {
-    const els = await page.$$(selector);
-    
-    for (const el of els) {
-      try {
-        const element = await page.evaluate((e) => {
-          const getAttr = (attr: string): string | undefined => {
-            const val = e.getAttribute(attr);
-            return val === null ? undefined : val;
-          };
-          
-          return {
-            tag: e.tagName.toLowerCase(),
-            type: (e as HTMLInputElement).type || undefined,
-            name: getAttr('name'),
-            placeholder: getAttr('placeholder'),
-            text: e.textContent?.trim().substring(0, 100),
-            href: getAttr('href'),
-            id: getAttr('id'),
-            className: getAttr('class'),
-            dataTestid: getAttr('data-testid'),
-            ariaLabel: getAttr('aria-label'),
-            role: getAttr('role'),
-            tabindex: getAttr('tabindex')
-          };
-        }, el);
-        
-        const selector = generateSelector(element);
-        
-        let action: 'click' | 'input' | 'submit' | 'none' = 'none';
-        if (element.tag === 'button' || element.tag === 'a' || element.role === 'button' || element.tabindex) {
-          action = 'click';
-        } else if (element.tag === 'input' || element.tag === 'textarea' || element.tag === 'select') {
-          action = 'input';
-        }
-        
-        const isVisible = await el.isVisible();
-        if (!isVisible) continue;
-        
-        const extracted: ExtractedElement = {
-          id: element.id || 'el-' + elements.length,
-          tag: element.tag,
-          type: element.type,
-          name: element.name,
-          placeholder: element.placeholder,
-          text: element.text,
-          href: element.href,
-          action,
-          selector,
-          attributes: {
-            className: element.className || '',
-            dataTestid: element.dataTestid || '',
-            ariaLabel: element.ariaLabel || '',
-            role: element.role || ''
-          }
-        };
-        
-        elements.push(extracted);
-      } catch (e) {
-        // Element might have been removed
+  const selector = 'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [tabindex]:not([tabindex="-1"])';
+
+  const raw = await page.$$eval(selector, (els) => {
+    return els.map((e, i) => {
+      const id = e.getAttribute('id');
+      const name = e.getAttribute('name');
+      const placeholder = e.getAttribute('placeholder');
+      const href = e.getAttribute('href');
+      const className = e.getAttribute('class');
+      const dataTestid = e.getAttribute('data-testid');
+      const ariaLabel = e.getAttribute('aria-label');
+      const role = e.getAttribute('role');
+      const tabindex = e.getAttribute('tabindex');
+
+      const tag = e.tagName.toLowerCase();
+      const type = (e as HTMLInputElement).type || undefined;
+
+      let action: 'click' | 'input' | 'submit' | 'none' = 'none';
+      if (tag === 'button' || tag === 'a' || role === 'button' || tabindex) {
+        action = 'click';
+      } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+        action = 'input';
       }
-    }
-  }
-  
-  return elements;
+
+      return {
+        id: id || `el-${i}`,
+        tag,
+        type,
+        name: name || undefined,
+        placeholder: placeholder || undefined,
+        text: e.textContent?.trim()?.substring(0, 100),
+        href: href || undefined,
+        action,
+        attributes: {
+          id: id || '',
+          className: className || '',
+          dataTestid: dataTestid || '',
+          ariaLabel: ariaLabel || '',
+          role: role || '',
+        },
+      };
+    });
+  });
+
+  return raw.map((element: any) => ({
+    ...element,
+    selector: generateSelector({
+      id: element.attributes?.id || undefined,
+      dataTestid: element.attributes?.dataTestid || undefined,
+      ariaLabel: element.attributes?.ariaLabel || undefined,
+      name: element.name,
+      tag: element.tag,
+    }),
+  }));
 }
 
 function generateSelector(attrs: any): string {

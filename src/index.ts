@@ -10,6 +10,12 @@ app.use(express.json());
 
 const browserManager = new BrowserManager();
 
+function normalizeUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
+
 // Configure stealth/proxy options
 app.post('/config', (req, res) => {
   const { proxy, userAgent, rotateUA, viewport } = req.body;
@@ -46,12 +52,13 @@ app.get('/elements', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const elements = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       return extractElements(page);
     });
     
-    res.json({ url, elements, count: elements.length });
+    res.json({ url: targetUrl, elements, count: elements.length });
   } catch (err) {
     const error = err as Error;
     res.status(500).json({ error: error.message });
@@ -67,12 +74,13 @@ app.get('/screenshot', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const screenshot = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       return await page.screenshot({ fullPage: false });
     });
     
-    res.json({ url, screenshot: screenshot.toString('base64') });
+    res.json({ url: targetUrl, screenshot: screenshot.toString('base64') });
   } catch (err) {
     const error = err as Error;
     res.status(500).json({ error: error.message });
@@ -88,8 +96,9 @@ app.post('/click', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const result = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       await page.click(selector);
       return { success: true };
     });
@@ -110,8 +119,9 @@ app.post('/type', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const result = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       await page.fill(selector, text);
       return { success: true, typed: text };
     });
@@ -132,8 +142,9 @@ app.post('/submit', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const result = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       await page.click(selector);
       await page.waitForLoadState('networkidle');
       return { success: true };
@@ -155,8 +166,9 @@ app.get('/state', async (req, res) => {
   }
   
   try {
+    const targetUrl = normalizeUrl(url);
     const state = await browserManager.withPage(async (page) => {
-      await page.goto(url, { waitUntil: 'networkidle' });
+      await page.goto(targetUrl, { waitUntil: 'networkidle' });
       const title = await page.title();
       const currentUrl = page.url();
       const elements = await extractElements(page);
