@@ -121,6 +121,24 @@ app.get('/scan-screenshot', async (req, res) => {
       return { status, finalUrl, title, elements, screenshot: screenshot.toString('base64'), timeoutMs: effectiveTimeout, viewport };
     });
 
+    const blockedByStatus = scan.status === 401 || scan.status === 403 || scan.status === 429;
+    const blockedByTitle = /access denied|forbidden|captcha|attention required/i.test(scan.title || '');
+    if (blockedByStatus || blockedByTitle) {
+      return res.status(422).json({
+        ok: false,
+        blocked: true,
+        url: targetUrl,
+        finalUrl: scan.finalUrl,
+        status: scan.status,
+        title: scan.title,
+        elements: [],
+        count: 0,
+        timeoutMs: scan.timeoutMs,
+        viewport: scan.viewport,
+        error: 'Target site blocked access (403/anti-bot). Screenshot results are hidden for this page.',
+      });
+    }
+
     if (!scan.elements.length) {
       return res.status(422).json({
         ok: false,
