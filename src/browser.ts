@@ -13,6 +13,11 @@ export interface ExtractedElement {
   attributes: Record<string, string>;
 }
 
+export interface BoxedElement extends ExtractedElement {
+  bbox?: { x: number; y: number; width: number; height: number };
+  confidence?: number;
+}
+
 export interface StealthOptions {
   proxy?: string;
   userAgent?: string;
@@ -104,6 +109,9 @@ export class BrowserManager {
     contextOptions.extraHTTPHeaders = {
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
       'Sec-Fetch-Dest': 'document',
       'Sec-Fetch-Mode': 'navigate',
       'Sec-Fetch-Site': 'none',
@@ -149,10 +157,23 @@ export class BrowserManager {
   }
 }
 
-export async function extractElements(page: Page): Promise<ExtractedElement[]> {
-  const selector = 'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [tabindex]:not([tabindex="-1"])';
+const INTERACTIVE_SELECTOR = 'button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [tabindex]:not([tabindex="-1"])';
 
-  const raw = await page.$$eval(selector, (els) => {
+function mapRawElements(raw: any[]): ExtractedElement[] {
+  return raw.map((element: any) => ({
+    ...element,
+    selector: generateSelector({
+      id: element.attributes?.id || undefined,
+      dataTestid: element.attributes?.dataTestid || undefined,
+      ariaLabel: element.attributes?.ariaLabel || undefined,
+      name: element.name,
+      tag: element.tag,
+    }),
+  }));
+}
+
+export async function extractElements(page: Page): Promise<ExtractedElement[]> {
+  const raw = await page.$$eval(INTERACTIVE_SELECTOR, (els) => {
     return els.map((e, i) => {
       const id = e.getAttribute('id');
       const name = e.getAttribute('name');
@@ -168,11 +189,8 @@ export async function extractElements(page: Page): Promise<ExtractedElement[]> {
       const type = (e as HTMLInputElement).type || undefined;
 
       let action: 'click' | 'input' | 'submit' | 'none' = 'none';
-      if (tag === 'button' || tag === 'a' || role === 'button' || tabindex) {
-        action = 'click';
-      } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
-        action = 'input';
-      }
+      if (tag === 'button' || tag === 'a' || role === 'button' || tabindex) action = 'click';
+      else if (tag === 'input' || tag === 'textarea' || tag === 'select') action = 'input';
 
       return {
         id: id || `el-${i}`,
@@ -194,16 +212,74 @@ export async function extractElements(page: Page): Promise<ExtractedElement[]> {
     });
   });
 
-  return raw.map((element: any) => ({
-    ...element,
-    selector: generateSelector({
-      id: element.attributes?.id || undefined,
-      dataTestid: element.attributes?.dataTestid || undefined,
-      ariaLabel: element.attributes?.ariaLabel || undefined,
-      name: element.name,
-      tag: element.tag,
-    }),
-  }));
+  return mapRawElements(raw);
+}
+
+export async function extractVisibleElementsWithBoxes(page: Page): Promise<BoxedElement[]> {
+  const collect = (selector: string, confidence: number, includeTextOnly = false) => page.$$eval(selector, (els, cfg) => {
+    const { conf, textOnly } = cfg as { conf: number; textOnly: boolean };
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    return els.map((e, i) => {
+      const rect = e.getBoundingClientRect();
+      const visible = rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.right > 0 && rect.left < vw && rect.top < vh;
+      if (!visible) return null;
+
+      const text = e.textContent?.trim()?.replace(/\s+/g, ' ').substring(0, 120) || '';
+      if (textOnly && text.length < 2) return null;
+
+      const id = e.getAttribute('id');
+      const name = e.getAttribute('name');
+      const placeholder = e.getAttribute('placeholder');
+      const href = e.getAttribute('href');
+      const className = e.getAttribute('class');
+      const dataTestid = e.getAttribute('data-testid');
+      const ariaLabel = e.getAttribute('aria-label');
+      const role = e.getAttribute('role');
+      const tabindex = e.getAttribute('tabindex');
+      const tag = e.tagName.toLowerCase();
+      const type = (e as HTMLInputElement).type || undefined;
+
+      let action: 'click' | 'input' | 'submit' | 'none' = 'none';
+      if (tag === 'button' || tag === 'a' || role === 'button' || tabindex || textOnly) action = 'click';
+      else if (tag === 'input' || tag === 'textarea' || tag === 'select') action = 'input';
+
+      return {
+        id: id || `el-${i}`,
+        tag,
+        type,
+        name: name || undefined,
+        placeholder: placeholder || undefined,
+        text,
+        href: href || undefined,
+        action,
+        bbox: {
+          x: Math.max(0, Math.round(rect.left)),
+          y: Math.max(0, Math.round(rect.top)),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+        confidence: conf,
+        attributes: {
+          id: id || '',
+          className: className || '',
+          dataTestid: dataTestid || '',
+          ariaLabel: ariaLabel || '',
+          role: role || '',
+        },
+      };
+    }).filter(Boolean);
+  }, { conf: confidence, textOnly: includeTextOnly });
+
+  let raw: any[] = await collect(INTERACTIVE_SELECTOR, 0.85, false);
+
+  if (!raw.length) {
+    raw = await collect('a, button, input, textarea, select, [role="button"], [onclick], h1, h2, h3, p, div, span', 0.55, true);
+    raw = raw.slice(0, 50);
+  }
+
+  return mapRawElements(raw) as BoxedElement[];
 }
 
 function generateSelector(attrs: any): string {
