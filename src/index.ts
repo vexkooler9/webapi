@@ -1,9 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import os from 'os';
 import { extractElements, extractVisibleElementsWithBoxes, BrowserManager } from './browser.js';
 
 const app = express();
-const port = process.env.PORT || 8888;
+const port = Number(process.env.PORT ?? 8888);
 
 app.use(cors());
 app.use(express.json());
@@ -14,6 +15,19 @@ function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
   return trimmed;
+}
+
+function getHostIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const addresses of Object.values(interfaces)) {
+    if (!addresses) continue;
+    for (const addr of addresses) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        return addr.address;
+      }
+    }
+  }
+  return '127.0.0.1';
 }
 
 // Configure stealth/proxy options
@@ -291,8 +305,9 @@ app.get('/state', async (req, res) => {
 });
 
 // Start server
-app.listen(port, () => {
-  console.log(`WebAPI server running on http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  const hostIp = getHostIp();
+  console.log(`WebAPI server running on http://${hostIp}:${port}`);
   console.log(`Endpoints:
   GET  /elements        ?url=<url>     - Extract interactive elements
   GET  /scan-screenshot ?url=<url>     - Screenshot + visible element scan
