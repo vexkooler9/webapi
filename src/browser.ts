@@ -216,8 +216,8 @@ export async function extractElements(page: Page): Promise<ExtractedElement[]> {
 }
 
 export async function extractVisibleElementsWithBoxes(page: Page): Promise<BoxedElement[]> {
-  const collect = (selector: string, confidence: number, includeTextOnly = false) => page.$$eval(selector, (els, cfg) => {
-    const { conf, textOnly } = cfg as { conf: number; textOnly: boolean };
+  const collect = (selector: string, confidence: number) => page.$$eval(selector, (els, cfg) => {
+    const { conf } = cfg as { conf: number };
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
@@ -225,9 +225,6 @@ export async function extractVisibleElementsWithBoxes(page: Page): Promise<Boxed
       const rect = e.getBoundingClientRect();
       const visible = rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.right > 0 && rect.left < vw && rect.top < vh;
       if (!visible) return null;
-
-      const text = e.textContent?.trim()?.replace(/\s+/g, ' ').substring(0, 120) || '';
-      if (textOnly && text.length < 2) return null;
 
       const id = e.getAttribute('id');
       const name = e.getAttribute('name');
@@ -238,12 +235,14 @@ export async function extractVisibleElementsWithBoxes(page: Page): Promise<Boxed
       const ariaLabel = e.getAttribute('aria-label');
       const role = e.getAttribute('role');
       const tabindex = e.getAttribute('tabindex');
+      const hasOnClick = e.hasAttribute('onclick');
       const tag = e.tagName.toLowerCase();
       const type = (e as HTMLInputElement).type || undefined;
 
       let action: 'click' | 'input' | 'submit' | 'none' = 'none';
-      if (tag === 'button' || tag === 'a' || role === 'button' || tabindex || textOnly) action = 'click';
-      else if (tag === 'input' || tag === 'textarea' || tag === 'select') action = 'input';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') action = 'input';
+      else if (tag === 'button' || tag === 'a' || role === 'button' || hasOnClick || tabindex) action = 'click';
+      if (action === 'none') return null;
 
       return {
         id: id || `el-${i}`,
@@ -251,7 +250,7 @@ export async function extractVisibleElementsWithBoxes(page: Page): Promise<Boxed
         type,
         name: name || undefined,
         placeholder: placeholder || undefined,
-        text,
+        text: e.textContent?.trim()?.replace(/\s+/g, ' ').substring(0, 120) || '',
         href: href || undefined,
         action,
         bbox: {
@@ -270,13 +269,12 @@ export async function extractVisibleElementsWithBoxes(page: Page): Promise<Boxed
         },
       };
     }).filter(Boolean);
-  }, { conf: confidence, textOnly: includeTextOnly });
+  }, { conf: confidence });
 
-  let raw: any[] = await collect(INTERACTIVE_SELECTOR, 0.85, false);
+  let raw: any[] = await collect(INTERACTIVE_SELECTOR, 0.85);
 
   if (!raw.length) {
-    raw = await collect('a, button, input, textarea, select, [role="button"], [onclick], h1, h2, h3, p, div, span', 0.55, true);
-    raw = raw.slice(0, 50);
+    raw = await collect('button, a[href], input:not([type="hidden"]), textarea, select, [role="button"], [onclick], [tabindex]:not([tabindex="-1"])', 0.7);
   }
 
   return mapRawElements(raw) as BoxedElement[];
